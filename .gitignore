@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-electron/
+jobs/
+models/
+.runlogs/
+.superpowers/
+docs/superpowers/
+.media-transcript-cache/
+__pycache__/
+*.pyc
+*.log
+.env
+.env.*
+!.env.example

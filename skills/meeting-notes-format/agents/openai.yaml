@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meeting Notes Format"
+  short_description: "Format meeting transcripts into notes and TODOs."
+  default_prompt: "Use this skill to define the final meeting note structure and task extraction rules."
