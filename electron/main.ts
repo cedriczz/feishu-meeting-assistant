@@ -46,6 +46,12 @@ function getJobPath(jobId: string) {
   return join(getJobsRoot(), jobId);
 }
 
+function getProcessorScriptPath() {
+  return app.isPackaged
+    ? join(process.resourcesPath, "scripts", "process_job.py")
+    : join(getWorkspaceRoot(), "scripts", "process_job.py");
+}
+
 function loadDotEnv() {
   const envPath = join(getWorkspaceRoot(), ".env");
   if (!existsSync(envPath)) return;
@@ -310,7 +316,7 @@ function registerIpcHandlers() {
 
     const jobPath = getJobPath(payload.jobId);
     const logsDir = join(jobPath, "logs");
-    const scriptPath = join(getWorkspaceRoot(), "scripts", "process_job.py");
+    const scriptPath = getProcessorScriptPath();
 
     mkdirSync(logsDir, { recursive: true });
     writeJson(join(jobPath, "status.json"), {

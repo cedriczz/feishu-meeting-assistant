@@ -12,8 +12,57 @@
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "dist:win": "npm run build && electron-builder --win portable --x64",
+    "dist:win:dir": "npm run build && electron-builder --win dir --x64",
+    "pack": "npm run build && electron-builder --dir",
     "lint": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "com.local.feishu-meeting-assistant",
+    "productName": "Feishu Meeting Assistant",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.7",
@@ -29,6 +78,7 @@
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^35.7.5",
+    "electron-builder": "^26.8.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
