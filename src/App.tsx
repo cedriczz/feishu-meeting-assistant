@@ -73,6 +73,22 @@ function permissionTone(status?: string) {
   };
 }
 
+function dependencyTone(available?: boolean) {
+  if (available) {
+    return {
+      label: "已就绪",
+      className: "text-emerald-700 bg-emerald-500/10 ring-emerald-500/20 dark:text-emerald-200",
+      icon: CheckCircle
+    };
+  }
+
+  return {
+    label: "待安装",
+    className: "text-amber-700 bg-amber-500/10 ring-amber-500/20 dark:text-amber-200",
+    icon: WarningCircle
+  };
+}
+
 function audioModeLabel(mode?: string) {
   switch (mode) {
     case "system-loopback":
@@ -323,6 +339,19 @@ export default function App() {
     { label: "屏幕录制", value: appInfo?.permissions.screen, action: "screen" as const },
     { label: "音频输入", value: appInfo?.permissions.microphone, action: "microphone" as const }
   ];
+  const dependencyItems = appInfo
+    ? [
+        { label: "Python", detail: appInfo.dependencies.python.command, available: appInfo.dependencies.python.available },
+        { label: "ffmpeg", detail: appInfo.dependencies.ffmpeg.command, available: appInfo.dependencies.ffmpeg.available },
+        { label: "Codex CLI", detail: appInfo.dependencies.codex.command ?? "codex", available: appInfo.dependencies.codex.available },
+        { label: "Lark CLI", detail: appInfo.dependencies.larkCli.command ?? "lark-cli", available: appInfo.dependencies.larkCli.available },
+        {
+          label: "media-transcript",
+          detail: appInfo.dependencies.mediaTranscript.path ?? "MEDIA_TRANSCRIPT_SCRIPT",
+          available: appInfo.dependencies.mediaTranscript.available
+        }
+      ]
+    : [];
 
   return (
     <div className="min-h-[100dvh] bg-[#0a0a0a] text-zinc-100">
@@ -429,6 +458,27 @@ export default function App() {
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-5 border-t border-white/10 pt-4">
+                <p className="text-xs text-zinc-500">本地依赖</p>
+                <div className="mt-3 space-y-2">
+                  {dependencyItems.map((item) => {
+                    const tone = dependencyTone(item.available);
+                    const Icon = tone.icon;
+                    return (
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-md bg-zinc-950/70 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm text-zinc-300">
+                            <Icon size={16} />
+                            <span>{item.label}</span>
+                          </div>
+                          <p className="mt-1 truncate font-mono text-[11px] text-zinc-600">{item.detail}</p>
+                        </div>
+                        <span className={`shrink-0 rounded-md px-2 py-1 text-xs ring-1 ${tone.className}`}>{tone.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </section>
           )}

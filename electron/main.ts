@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 type SourceSummary = {
   id: string;
@@ -107,6 +108,58 @@ function getCaptureAudioMode() {
   }
 
   return "input-device";
+}
+
+function getMediaTranscriptScriptPath() {
+  const candidates = [
+    process.env.MEDIA_TRANSCRIPT_SCRIPT,
+    join(getWorkspaceRoot(), "tools", "media-transcript", "scripts", "run_media_transcript.py"),
+    join(homedir(), ".codex", "skills", "media-transcript", "scripts", "run_media_transcript.py")
+  ].filter(Boolean) as string[];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function getDependencyStatus() {
+  const codexCommand = commandAvailable(process.platform === "win32" ? "codex.cmd" : "codex")
+    ? process.platform === "win32"
+      ? "codex.cmd"
+      : "codex"
+    : commandAvailable("codex")
+      ? "codex"
+      : null;
+  const larkCliCommand = commandAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli")
+    ? process.platform === "win32"
+      ? "lark-cli.cmd"
+      : "lark-cli"
+    : commandAvailable("lark-cli")
+      ? "lark-cli"
+      : null;
+  const pythonCommand = getPythonCommand();
+  const mediaTranscriptScript = getMediaTranscriptScriptPath();
+
+  return {
+    python: {
+      available: commandAvailable(pythonCommand),
+      command: pythonCommand
+    },
+    ffmpeg: {
+      available: commandAvailable("ffmpeg"),
+      command: "ffmpeg"
+    },
+    codex: {
+      available: Boolean(codexCommand),
+      command: codexCommand
+    },
+    larkCli: {
+      available: Boolean(larkCliCommand),
+      command: larkCliCommand
+    },
+    mediaTranscript: {
+      available: Boolean(mediaTranscriptScript),
+      path: mediaTranscriptScript
+    }
+  };
 }
 
 function ensureJobSubdirs(jobId: string) {
@@ -287,20 +340,24 @@ function setupDisplayMediaHandler() {
 }
 
 function registerIpcHandlers() {
-  ipcMain.handle("app:get-info", () => ({
-    platform: process.platform,
-    platformLabel: getPlatformLabel(),
-    workspaceRoot: getWorkspaceRoot(),
-    jobsRoot: getJobsRoot(),
-    isPackaged: app.isPackaged,
-    captureAudioMode: getCaptureAudioMode(),
-    permissions: {
-      screen: getMediaAccessStatus("screen"),
-      microphone: getMediaAccessStatus("microphone")
-    },
-    codexAvailable: commandAvailable(process.platform === "win32" ? "codex.cmd" : "codex") || commandAvailable("codex"),
-    larkCliAvailable: commandAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli") || commandAvailable("lark-cli")
-  }));
+  ipcMain.handle("app:get-info", () => {
+    const dependencies = getDependencyStatus();
+    return {
+      platform: process.platform,
+      platformLabel: getPlatformLabel(),
+      workspaceRoot: getWorkspaceRoot(),
+      jobsRoot: getJobsRoot(),
+      isPackaged: app.isPackaged,
+      captureAudioMode: getCaptureAudioMode(),
+      permissions: {
+        screen: getMediaAccessStatus("screen"),
+        microphone: getMediaAccessStatus("microphone")
+      },
+      dependencies,
+      codexAvailable: dependencies.codex.available,
+      larkCliAvailable: dependencies.larkCli.available
+    };
+  });
 
   ipcMain.handle("app:open-system-settings", async (_event, section: "screen" | "microphone") => {
     if (!isMac) return { ok: true };

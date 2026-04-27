@@ -11,6 +11,28 @@ type AppInfo = {
     screen: string;
     microphone: string;
   };
+  dependencies: {
+    python: {
+      available: boolean;
+      command: string;
+    };
+    ffmpeg: {
+      available: boolean;
+      command: string;
+    };
+    codex: {
+      available: boolean;
+      command: string | null;
+    };
+    larkCli: {
+      available: boolean;
+      command: string | null;
+    };
+    mediaTranscript: {
+      available: boolean;
+      path: string | null;
+    };
+  };
   codexAvailable: boolean;
   larkCliAvailable: boolean;
 };

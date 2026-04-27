@@ -1,101 +1,107 @@
 # Feishu Meeting Assistant
 
-Local desktop assistant for recording a meeting window, turning the audio into Chinese meeting notes, and dispatching actionable items to Lark/Feishu To Do.
+本地优先的桌面助手，用于录制会议窗口、生成中文会议纪要，并把可执行事项派发到 Lark/飞书 To Do。
 
-The app is local-first:
+## Mac 用户快速开始
 
-- Electron records the selected meeting window or screen.
-- Python extracts audio and orchestrates the processing pipeline.
-- A media transcript skill generates the speaker transcript.
-- Codex CLI creates meeting notes and task JSON.
-- Lark CLI creates the cloud document and visible To Do items.
+这个仓库支持 **Mac 用户 clone 后本地源码运行**，不需要 Apple Developer 账号，不需要应用签名或公证。
 
-## What It Does
+```bash
+git clone https://github.com/cedriczz/feishu-meeting-assistant.git
+cd feishu-meeting-assistant
+npm install
+npm run setup:mac
+npm run dev
+```
 
-1. Select a meeting window or screen.
-2. Record the meeting locally.
-3. Extract audio from the recording.
-4. Generate a speaker transcript.
-5. Generate a Chinese meeting document.
-6. Extract actionable TODO items.
-7. Create a Lark cloud document and visible Lark To Do items.
+`npm run setup:mac` 会做两件事：
 
-Generated job output is written under `jobs/<job-id>/`:
+- 如果没有 `.env`，自动从 `.env.example` 创建。
+- 检查本机是否具备 Python、ffmpeg、Codex CLI、Lark CLI、media-transcript 等运行依赖。
+
+你也可以随时重新检查：
+
+```bash
+npm run doctor:mac
+```
+
+### Mac 首次录制授权
+
+首次录制时，macOS 会要求授权：
+
+- 屏幕录制：用于读取你选择的会议窗口。
+- 麦克风：用于录入默认音频输入。
+
+如果要录制系统声音，请把 BlackHole、Loopback 等虚拟声卡配置为系统音频输入。修改权限后，请完全退出并重新打开应用。
+
+## Mac 依赖安装参考
+
+如果 `npm run setup:mac` 提示缺依赖，可以按需安装：
+
+```bash
+brew install node python ffmpeg
+```
+
+完整处理流程还需要：
+
+- Codex CLI：用于生成会议纪要和任务 JSON。
+- Lark CLI：用于创建飞书云文档和 To Do。
+- media-transcript script：用于生成带说话人的转写稿。
+
+media-transcript 脚本默认查找：
+
+- `./tools/media-transcript/scripts/run_media_transcript.py`
+- `~/.codex/skills/media-transcript/scripts/run_media_transcript.py`
+- 或 `.env` 中的 `MEDIA_TRANSCRIPT_SCRIPT=/path/to/run_media_transcript.py`
+
+这些授权和账号配置可以在应用能启动之后再补；缺少它们时，应用可以打开和录制，但完整的“转写 -> 纪要 -> 飞书派发”流程会在处理阶段失败或跳过。
+
+## 产品流程
+
+1. 选择会议窗口或屏幕。
+2. 本地录制会议。
+3. 提取音频。
+4. 生成说话人转写稿。
+5. 生成中文会议纪要。
+6. 提取结构化 TODO。
+7. 创建飞书云文档，并为当前登录用户创建可见 To Do。
+
+生成结果位于 `jobs/<job-id>/`：
 
 - `output/raw-speaker-transcript.md`
 - `output/meeting-notes.md`
 - `output/tasks-review.json`
 - `output/dispatch-result.json`
 
-## Requirements
-
-- Node.js 20+
-- Python 3.11+
-- `ffmpeg`
-- Codex CLI available as `codex`
-- Lark CLI available as `lark-cli`
-- A media transcript skill script, either at:
-  - `./tools/media-transcript/scripts/run_media_transcript.py`
-  - `~/.codex/skills/media-transcript/scripts/run_media_transcript.py`
-  - or `MEDIA_TRANSCRIPT_SCRIPT=/path/to/run_media_transcript.py`
-
-## Setup
+## 常用命令
 
 ```bash
-npm install
-cp .env.example .env
+npm run setup:mac
+npm run doctor:mac
 npm run dev
-```
-
-On Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-npm run dev
-```
-
-## Build
-
-```bash
 npm run build
 ```
 
-Windows portable build:
+Windows PowerShell:
 
-```bash
-npm run dist:win
+```powershell
+Copy-Item .env.example .env
+npm run setup
+npm run dev
 ```
 
-macOS DMG and ZIP build:
+打包命令：
 
 ```bash
 npm run dist:mac
+npm run dist:win
 ```
 
-Fast unpacked macOS build for local smoke tests:
-
-```bash
-npm run dist:mac:dir
-```
-
-## macOS Notes
-
-The macOS app is packaged with a native hidden title bar, app menu, privacy usage descriptions, and unsigned DMG/ZIP targets for both Intel and Apple Silicon.
-
-macOS requires Screen Recording permission before Electron can capture the selected window. Audio capture uses the default microphone or a virtual loopback input, such as BlackHole, Loopback, or another device configured in system audio settings. After changing permissions, quit and reopen the app.
-
-The app includes shortcuts to open:
-
-- System Settings > Privacy & Security > Screen Recording
-- System Settings > Privacy & Security > Microphone
-
-Unsigned public builds may require right-click > Open on first launch.
+当前打包产物是未签名构建。源码运行不需要 Apple Developer 账号；只有当你要发布“普通用户双击安装且不出现系统警告”的正式 Mac App 时，才需要 Apple Developer ID 签名和 notarization。
 
 ## Environment Variables
 
 See `.env.example`.
-
-Common overrides:
 
 - `MEDIA_TRANSCRIPT_SCRIPT`: explicit path to `run_media_transcript.py`
 - `MEDIA_TRANSCRIPT_QUALITY`: `balanced` or `best`
@@ -106,21 +112,21 @@ Common overrides:
 
 ## Meeting Note Format Skill
 
-The final meeting document format is controlled by:
+最终会议文档格式由下面的 skill 控制：
 
 ```text
 skills/meeting-notes-format/SKILL.md
 ```
 
-Edit this skill to change section order, TODO extraction rules, risk handling, or the Lark document style.
+修改它可以调整章节顺序、TODO 提取规则、风险项处理和飞书文档风格。
 
 ## GitHub Actions
 
-The workflow in `.github/workflows/build.yml` runs type checks and production builds on Windows and macOS. It also uploads unpacked desktop artifacts for inspection.
+`.github/workflows/build.yml` 会在 Windows 和 macOS 上执行类型检查、生产构建和 unpacked 桌面包构建。
 
 ## Public Repository Hygiene
 
-Generated and local-only data is ignored:
+以下本地生成内容默认忽略，不应提交到公开仓库：
 
 - `jobs/`
 - `models/`
@@ -132,37 +138,4 @@ Generated and local-only data is ignored:
 - `node_modules/`
 - `.env`
 
-Do not commit meeting recordings, transcripts, Lark tokens, local config, or generated cloud dispatch results.
-
----
-
-## 中文说明
-
-这是一个本地优先的桌面助手，用于录制会议窗口、处理音频、生成中文会议纪要，并把可执行事项派发到飞书 To Do。
-
-核心流程：
-
-1. 选择会议窗口或屏幕。
-2. 本地录制会议。
-3. 从录制文件中提取音频。
-4. 生成带说话人的转写稿。
-5. 生成中文会议纪要。
-6. 提取结构化 TODO。
-7. 创建飞书云文档，并为当前登录用户创建可见 To Do。
-
-### macOS 使用说明
-
-Mac 版本已经适配 Electron 的 macOS 窗口、应用菜单、权限说明和打包配置。首次使用时需要在系统设置中授权：
-
-- 屏幕录制：允许应用读取会议窗口画面。
-- 麦克风：允许应用录入默认音频输入。若需要录制系统声音，请将 BlackHole、Loopback 等虚拟声卡设置为输入源。
-
-修改权限后，请完全退出并重新打开应用。
-
-### 打包命令
-
-```bash
-npm run dist:mac
-```
-
-会生成 macOS 的 DMG 和 ZIP 包。当前公开构建未签名，首次启动可能需要右键选择“打开”。
+不要提交会议录音、转写稿、飞书 token、本地配置或云端派发结果。
