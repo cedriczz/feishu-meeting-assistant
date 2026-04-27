@@ -5,9 +5,11 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from shutil import which
@@ -15,6 +17,16 @@ from shutil import which
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MEETING_NOTES_SKILL = REPO_ROOT / "skills" / "meeting-notes-format" / "SKILL.md"
+SUPPORTED_AGENT_PROVIDERS = ("claude", "gemini", "codex", "custom")
+
+
+@dataclass
+class AgentCommand:
+    provider: str
+    command: list[str]
+    model: str | None
+    prompt_input: str | None
+    output_message: Path
 
 
 def load_dotenv(path: Path) -> None:
@@ -80,6 +92,25 @@ def run_capture(command: list[str], cwd: Path | None = None) -> subprocess.Compl
     )
 
 
+def run_agent_process(command: list[str], job_dir: Path, input_text: str | None) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        cwd=str(job_dir),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        input=input_text,
+        capture_output=True,
+    )
+    logs_dir = job_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "agent.stdout.log").write_text(result.stdout or "", encoding="utf-8")
+    (logs_dir / "agent.stderr.log").write_text(result.stderr or "", encoding="utf-8")
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, command, result.stdout, result.stderr)
+    return result
+
+
 def optional_path_from_env(name: str) -> Path | None:
     value = os.environ.get(name)
     if not value:
@@ -109,6 +140,73 @@ def find_meeting_notes_skill() -> Path | None:
         if candidate and candidate.exists():
             return candidate
     return None
+
+
+def which_any(commands: list[str]) -> str | None:
+    for command in commands:
+        found = which(command)
+        if found:
+            return found
+    return None
+
+
+def platform_commands(base: str) -> list[str]:
+    if sys.platform == "win32":
+        return [f"{base}.cmd", base]
+    return [base]
+
+
+def split_agent_args(value: str) -> list[str]:
+    value = value.strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        parsed = json.loads(value)
+        if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+            raise ValueError("AGENT_CLI_ARGS JSON must be a string array.")
+        return parsed
+    return shlex.split(value, posix=sys.platform != "win32")
+
+
+def requested_agent_provider() -> str:
+    provider = os.environ.get("AGENT_CLI_PROVIDER", "auto").strip().lower() or "auto"
+    if provider == "cloud":
+        return "claude"
+    if provider == "claude-code":
+        return "claude"
+    return provider
+
+
+def resolve_agent_provider() -> tuple[str, str]:
+    requested = requested_agent_provider()
+    custom_command = os.environ.get("AGENT_CLI_COMMAND", "").strip()
+
+    if requested == "custom":
+        if not custom_command:
+            raise FileNotFoundError("AGENT_CLI_PROVIDER=custom requires AGENT_CLI_COMMAND.")
+        return "custom", custom_command
+
+    if requested != "auto":
+        if requested not in SUPPORTED_AGENT_PROVIDERS:
+            raise ValueError(
+                f"Unsupported AGENT_CLI_PROVIDER={requested}. Use auto, claude, gemini, codex, or custom."
+            )
+        found = which_any(platform_commands(requested))
+        if not found:
+            raise FileNotFoundError(f"Requested Agent CLI provider '{requested}' was not found in PATH.")
+        return requested, found
+
+    if custom_command:
+        return "custom", custom_command
+
+    for provider in ["claude", "gemini", "codex"]:
+        found = which_any(platform_commands(provider))
+        if found:
+            return provider, found
+
+    raise FileNotFoundError(
+        "No supported Agent CLI found. Install Claude Code CLI, Gemini CLI, Codex CLI, or set AGENT_CLI_PROVIDER=custom with AGENT_CLI_COMMAND."
+    )
 
 
 def load_meeting_notes_skill() -> str:
@@ -164,13 +262,13 @@ def run_media_transcript(job_dir: Path) -> Path:
     return transcript_path
 
 
-def build_codex_prompt(job_dir: Path, transcript_path: Path) -> str:
+def build_agent_prompt(job_dir: Path, transcript_path: Path) -> str:
     metadata_path = job_dir / "input" / "capture-metadata.json"
     skill_text = load_meeting_notes_skill()
 
     return textwrap.dedent(
         f"""
-        You are processing a local Lark/Feishu meeting recording job.
+        You are an AI Agent CLI processing a local Lark/Feishu meeting recording job.
 
         Current job root:
         - Capture metadata: {metadata_path.relative_to(job_dir).as_posix()}
@@ -258,46 +356,123 @@ def build_codex_prompt(job_dir: Path, transcript_path: Path) -> str:
     ).strip()
 
 
-def build_codex_command(job_dir: Path, model: str) -> list[str]:
-    output_message = job_dir / "logs" / "codex-last-message.txt"
-    codex_bin = which("codex.cmd") or which("codex") or "codex"
-    base_command = [
-        codex_bin,
-        "exec",
-        "-m",
-        model,
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--skip-git-repo-check",
-        "--cd",
-        str(job_dir),
-        "--output-last-message",
-        str(output_message),
-        "-",
-    ]
-    if sys.platform == "win32" and Path(codex_bin).suffix.lower() == ".cmd":
-        return ["cmd.exe", "/c", *base_command]
-    return base_command
+def agent_model_for(provider: str) -> str | None:
+    explicit = os.environ.get("AGENT_CLI_MODEL", "").strip()
+    if explicit:
+        return explicit
+    if provider == "codex":
+        return os.environ.get("CODEX_MODEL", "gpt-5.4").strip() or "gpt-5.4"
+    return None
 
 
-def run_codex(job_dir: Path, prompt: str) -> None:
-    preferred_model = os.environ.get("CODEX_MODEL", "gpt-5.4")
-    fallback_model = os.environ.get("CODEX_FALLBACK_MODEL", "")
+def agent_fallback_model_for(provider: str) -> str | None:
+    explicit = os.environ.get("AGENT_CLI_FALLBACK_MODEL", "").strip()
+    if explicit:
+        return explicit
+    if provider == "codex":
+        return os.environ.get("CODEX_FALLBACK_MODEL", "").strip() or None
+    return None
+
+
+def wrap_windows_batch(command: list[str]) -> list[str]:
+    if sys.platform == "win32" and command and Path(command[0]).suffix.lower() == ".cmd":
+        return ["cmd.exe", "/c", *command]
+    return command
+
+
+def build_agent_command(job_dir: Path, prompt_path: Path, provider: str, executable: str, model: str | None) -> AgentCommand:
+    output_message = job_dir / "logs" / "agent-last-message.txt"
+    short_instruction = (
+        "Read intermediate/agent-prompt.md and complete the requested local outputs. "
+        "You may read and write files in this job directory."
+    )
+
+    if provider == "codex":
+        command = [
+            executable,
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--skip-git-repo-check",
+            "--cd",
+            str(job_dir),
+            "--output-last-message",
+            str(output_message),
+        ]
+        if model:
+            command.extend(["-m", model])
+        command.append("-")
+        return AgentCommand(provider, wrap_windows_batch(command), model, prompt_path.read_text(encoding="utf-8"), output_message)
+
+    if provider == "claude":
+        command = [executable, "--print", "--dangerously-skip-permissions", short_instruction]
+        if model:
+            command[1:1] = ["--model", model]
+        return AgentCommand(provider, wrap_windows_batch(command), model, None, output_message)
+
+    if provider == "gemini":
+        command = [executable, "--prompt", short_instruction, "--approval-mode=yolo"]
+        if model:
+            command.extend(["--model", model])
+        return AgentCommand(provider, wrap_windows_batch(command), model, None, output_message)
+
+    if provider == "custom":
+        base = split_agent_args(executable)
+        args_template = os.environ.get("AGENT_CLI_ARGS", "").strip()
+        args = split_agent_args(args_template) if args_template else []
+        replacements = {
+            "{job_dir}": str(job_dir),
+            "{prompt_file}": str(prompt_path),
+            "{model}": model or "",
+            "{output_message}": str(output_message),
+        }
+        expanded_args = []
+        for arg in args:
+            for placeholder, value in replacements.items():
+                arg = arg.replace(placeholder, value)
+            expanded_args.append(arg)
+        use_stdin = os.environ.get("AGENT_CLI_STDIN", "false").strip().lower() in {"1", "true", "yes"}
+        return AgentCommand(provider, wrap_windows_batch([*base, *expanded_args]), model, prompt_path.read_text(encoding="utf-8") if use_stdin else None, output_message)
+
+    raise ValueError(f"Unsupported Agent CLI provider: {provider}")
+
+
+def run_agent_cli(job_dir: Path, prompt: str) -> None:
+    prompt_path = job_dir / "intermediate" / "agent-prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    provider, executable = resolve_agent_provider()
+    model = agent_model_for(provider)
+    fallback_model = agent_fallback_model_for(provider)
+
+    command = build_agent_command(job_dir, prompt_path, provider, executable, model)
     try:
-        run(build_codex_command(job_dir, preferred_model), input_text=prompt)
-        write_json(job_dir / "intermediate" / "codex-model.json", {"model": preferred_model, "fallback_used": False})
+        result = run_agent_process(command.command, job_dir, command.prompt_input)
+        command.output_message.write_text(result.stdout or "", encoding="utf-8")
+        write_json(
+            job_dir / "intermediate" / "agent-cli.json",
+            {
+                "provider": provider,
+                "command": command.command[0] if command.command else executable,
+                "model": model,
+                "fallback_used": False,
+            },
+        )
     except subprocess.CalledProcessError as exc:
         if not fallback_model:
             raise
+        fallback_command = build_agent_command(job_dir, prompt_path, provider, executable, fallback_model)
+        result = run_agent_process(fallback_command.command, job_dir, fallback_command.prompt_input)
+        fallback_command.output_message.write_text(result.stdout or "", encoding="utf-8")
         write_json(
-            job_dir / "intermediate" / "codex-model.json",
+            job_dir / "intermediate" / "agent-cli.json",
             {
+                "provider": provider,
+                "command": fallback_command.command[0] if fallback_command.command else executable,
                 "model": fallback_model,
                 "fallback_used": True,
-                "failed_model": preferred_model,
+                "failed_model": model,
                 "failed_return_code": exc.returncode,
             },
         )
-        run(build_codex_command(job_dir, fallback_model), input_text=prompt)
 
 
 def ensure_minimum_outputs(job_dir: Path) -> None:
@@ -308,12 +483,12 @@ def ensure_minimum_outputs(job_dir: Path) -> None:
 
     if not cleaned_path.exists():
         cleaned_path.write_text(
-            "# Cleaned Transcript Digest\n\nCodex did not write cleaned-transcript.md. Check `output/raw-speaker-transcript.md` first.\n",
+            "# Cleaned Transcript Digest\n\nAgent CLI did not write cleaned-transcript.md. Check `output/raw-speaker-transcript.md` first.\n",
             encoding="utf-8",
         )
     if not notes_path.exists():
         notes_path.write_text(
-            "# Meeting Notes\n\nCodex did not write meeting-notes.md. Check `output/raw-speaker-transcript.md` first.\n",
+            "# Meeting Notes\n\nAgent CLI did not write meeting-notes.md. Check `output/raw-speaker-transcript.md` first.\n",
             encoding="utf-8",
         )
     if not tasks_path.exists():
@@ -329,11 +504,11 @@ def ensure_minimum_outputs(job_dir: Path) -> None:
                     "url": None,
                     "token": None,
                     "raw": {},
-                    "error": "Codex did not write dispatch-result.json",
+                    "error": "Agent CLI did not write dispatch-result.json",
                 },
                 "created": [],
                 "skipped": [],
-                "failed": [{"summary": "all", "reason": "Codex did not write dispatch-result.json"}],
+                "failed": [{"summary": "all", "reason": "Agent CLI did not write dispatch-result.json"}],
             },
         )
 
@@ -583,10 +758,9 @@ def main() -> None:
     write_status(job_dir, "processing", "transcript", 0.52, "Generating speaker transcript")
     transcript_path = run_media_transcript(job_dir)
 
-    write_status(job_dir, "processing", "codex", 0.78, "Codex is creating meeting notes, cloud document, and Lark To Dos")
-    prompt = build_codex_prompt(job_dir, transcript_path)
-    (job_dir / "intermediate" / "codex-prompt.md").write_text(prompt, encoding="utf-8")
-    run_codex(job_dir, prompt)
+    write_status(job_dir, "processing", "agent", 0.78, "Agent CLI is creating meeting notes, cloud document, and Lark To Dos")
+    prompt = build_agent_prompt(job_dir, transcript_path)
+    run_agent_cli(job_dir, prompt)
 
     ensure_minimum_outputs(job_dir)
     write_status(job_dir, "processing", "lark", 0.92, "Ensuring Lark cloud document and To Dos are created")

@@ -82,6 +82,69 @@ function mediaTranscriptPath() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+function platformCommandNames(command) {
+  return expectedPlatform === "win32" ? [`${command}.cmd`, command] : [command];
+}
+
+function normalizeAgentProvider(provider) {
+  const normalized = (provider || "auto").trim().toLowerCase() || "auto";
+  if (normalized === "cloud" || normalized === "claude-code") return "claude";
+  return normalized;
+}
+
+function detectAgentCli() {
+  const configuredProvider = normalizeAgentProvider(env.AGENT_CLI_PROVIDER || "auto");
+  const customCommand = (env.AGENT_CLI_COMMAND || "").trim();
+  const model = env.AGENT_CLI_MODEL || (env.CODEX_MODEL && configuredProvider === "codex" ? env.CODEX_MODEL : "");
+
+  if (configuredProvider === "custom") {
+    return {
+      ok: Boolean(customCommand),
+      provider: "custom",
+      command: customCommand || "not configured",
+      model
+    };
+  }
+
+  if (configuredProvider !== "auto") {
+    const command = firstAvailable(platformCommandNames(configuredProvider));
+    return {
+      ok: Boolean(command),
+      provider: configuredProvider,
+      command: command ?? "not found",
+      model
+    };
+  }
+
+  if (customCommand) {
+    return {
+      ok: true,
+      provider: "custom",
+      command: customCommand,
+      model
+    };
+  }
+
+  for (const provider of ["claude", "gemini", "codex"]) {
+    const command = firstAvailable(platformCommandNames(provider));
+    if (command) {
+      return {
+        ok: true,
+        provider,
+        command,
+        model: env.AGENT_CLI_MODEL || (provider === "codex" ? env.CODEX_MODEL || "gpt-5.4" : "")
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    provider: "auto",
+    command: "not found",
+    model
+  };
+}
+
 function printCheck(check) {
   const status = check.ok ? "ok" : check.required ? "missing" : "warn";
   const suffix = check.detail ? ` - ${check.detail}` : "";
@@ -93,6 +156,7 @@ function printCheck(check) {
 
 const nodeVersion = parseVersion(process.versions.node);
 const python = pythonInfo();
+const agentCli = detectAgentCli();
 const checks = [
   {
     label: "Node.js 20+",
@@ -123,11 +187,11 @@ const checks = [
     help: expectedPlatform === "darwin" ? "Install with: brew install ffmpeg" : "Install ffmpeg and make it available in PATH."
   },
   {
-    label: "Codex CLI",
-    ok: Boolean(firstAvailable(expectedPlatform === "win32" ? ["codex.cmd", "codex"] : ["codex"])),
+    label: "Agent CLI",
+    ok: agentCli.ok,
     required: false,
-    detail: firstAvailable(expectedPlatform === "win32" ? ["codex.cmd", "codex"] : ["codex"]) ?? "not found",
-    help: "Install and sign in to Codex CLI before processing a meeting."
+    detail: `${agentCli.provider}: ${agentCli.command}${agentCli.model ? `, model ${agentCli.model}` : ""}`,
+    help: "Install and sign in to Claude Code CLI, Gemini CLI, Codex CLI, or set AGENT_CLI_PROVIDER=custom with AGENT_CLI_COMMAND."
   },
   {
     label: "Lark CLI",

@@ -18,9 +18,12 @@ export type AppInfo = {
       available: boolean;
       command: string;
     };
-    codex: {
+    agentCli: {
       available: boolean;
+      provider: string | null;
+      configuredProvider: string;
       command: string | null;
+      model: string | null;
     };
     larkCli: {
       available: boolean;
@@ -31,7 +34,7 @@ export type AppInfo = {
       path: string | null;
     };
   };
-  codexAvailable: boolean;
+  agentCliAvailable: boolean;
   larkCliAvailable: boolean;
 };
 

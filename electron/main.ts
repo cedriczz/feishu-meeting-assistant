@@ -81,6 +81,14 @@ function commandAvailable(command: string) {
   return spawnSync(lookup, [command], { stdio: "ignore" }).status === 0;
 }
 
+function platformCommandNames(command: string) {
+  return process.platform === "win32" ? [`${command}.cmd`, command] : [command];
+}
+
+function findCommand(commands: string[]) {
+  return commands.find((command) => commandAvailable(command)) ?? null;
+}
+
 function getPythonCommand() {
   if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
   return process.platform === "win32" ? "python" : "python3";
@@ -120,23 +128,70 @@ function getMediaTranscriptScriptPath() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+function getAgentCliStatus() {
+  const configuredProvider = (process.env.AGENT_CLI_PROVIDER || "auto").trim().toLowerCase() || "auto";
+  const customCommand = (process.env.AGENT_CLI_COMMAND || "").trim();
+  const normalizedProvider =
+    configuredProvider === "cloud" || configuredProvider === "claude-code" ? "claude" : configuredProvider;
+
+  if (normalizedProvider === "custom") {
+    return {
+      available: Boolean(customCommand),
+      provider: "custom",
+      configuredProvider,
+      command: customCommand || null,
+      model: process.env.AGENT_CLI_MODEL || null
+    };
+  }
+
+  if (normalizedProvider !== "auto") {
+    const command = findCommand(platformCommandNames(normalizedProvider));
+    return {
+      available: Boolean(command),
+      provider: normalizedProvider,
+      configuredProvider,
+      command,
+      model: process.env.AGENT_CLI_MODEL || null
+    };
+  }
+
+  if (customCommand) {
+    return {
+      available: true,
+      provider: "custom",
+      configuredProvider,
+      command: customCommand,
+      model: process.env.AGENT_CLI_MODEL || null
+    };
+  }
+
+  for (const provider of ["claude", "gemini", "codex"]) {
+    const command = findCommand(platformCommandNames(provider));
+    if (command) {
+      return {
+        available: true,
+        provider,
+        configuredProvider,
+        command,
+        model: process.env.AGENT_CLI_MODEL || (provider === "codex" ? process.env.CODEX_MODEL || "gpt-5.4" : null)
+      };
+    }
+  }
+
+  return {
+    available: false,
+    provider: null,
+    configuredProvider,
+    command: null,
+    model: process.env.AGENT_CLI_MODEL || null
+  };
+}
+
 function getDependencyStatus() {
-  const codexCommand = commandAvailable(process.platform === "win32" ? "codex.cmd" : "codex")
-    ? process.platform === "win32"
-      ? "codex.cmd"
-      : "codex"
-    : commandAvailable("codex")
-      ? "codex"
-      : null;
-  const larkCliCommand = commandAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli")
-    ? process.platform === "win32"
-      ? "lark-cli.cmd"
-      : "lark-cli"
-    : commandAvailable("lark-cli")
-      ? "lark-cli"
-      : null;
+  const larkCliCommand = findCommand(platformCommandNames("lark-cli"));
   const pythonCommand = getPythonCommand();
   const mediaTranscriptScript = getMediaTranscriptScriptPath();
+  const agentCli = getAgentCliStatus();
 
   return {
     python: {
@@ -147,10 +202,7 @@ function getDependencyStatus() {
       available: commandAvailable("ffmpeg"),
       command: "ffmpeg"
     },
-    codex: {
-      available: Boolean(codexCommand),
-      command: codexCommand
-    },
+    agentCli,
     larkCli: {
       available: Boolean(larkCliCommand),
       command: larkCliCommand
@@ -354,7 +406,7 @@ function registerIpcHandlers() {
         microphone: getMediaAccessStatus("microphone")
       },
       dependencies,
-      codexAvailable: dependencies.codex.available,
+      agentCliAvailable: dependencies.agentCli.available,
       larkCliAvailable: dependencies.larkCli.available
     };
   });

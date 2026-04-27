@@ -343,7 +343,11 @@ export default function App() {
     ? [
         { label: "Python", detail: appInfo.dependencies.python.command, available: appInfo.dependencies.python.available },
         { label: "ffmpeg", detail: appInfo.dependencies.ffmpeg.command, available: appInfo.dependencies.ffmpeg.available },
-        { label: "Codex CLI", detail: appInfo.dependencies.codex.command ?? "codex", available: appInfo.dependencies.codex.available },
+        {
+          label: "Agent CLI",
+          detail: appInfo.dependencies.agentCli.command ?? "claude / gemini / codex / custom",
+          available: appInfo.dependencies.agentCli.available
+        },
         { label: "Lark CLI", detail: appInfo.dependencies.larkCli.command ?? "lark-cli", available: appInfo.dependencies.larkCli.available },
         {
           label: "media-transcript",
@@ -368,12 +372,12 @@ export default function App() {
             </span>
             <span
               className={`rounded-md px-2.5 py-1 ring-1 ${
-                appInfo?.codexAvailable
+                appInfo?.agentCliAvailable
                   ? "bg-emerald-500/10 text-emerald-200 ring-emerald-500/20"
                   : "bg-amber-500/10 text-amber-200 ring-amber-500/20"
               }`}
             >
-              Codex {appInfo?.codexAvailable ? "可用" : "未检测"}
+              Agent CLI {appInfo?.agentCliAvailable ? appInfo.dependencies.agentCli.provider ?? "可用" : "未检测"}
             </span>
             <span
               className={`rounded-md px-2.5 py-1 ring-1 ${
