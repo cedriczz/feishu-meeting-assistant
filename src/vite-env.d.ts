@@ -2,8 +2,15 @@
 
 type AppInfo = {
   platform: string;
+  platformLabel: string;
   workspaceRoot: string;
   jobsRoot: string;
+  isPackaged: boolean;
+  captureAudioMode: string;
+  permissions: {
+    screen: string;
+    microphone: string;
+  };
   codexAvailable: boolean;
   larkCliAvailable: boolean;
 };
@@ -33,6 +40,7 @@ type JobSummary = {
 
 type MeetingAssistantApi = {
   getAppInfo: () => Promise<AppInfo>;
+  openSystemSettings: (section: "screen" | "microphone") => Promise<{ ok: true }>;
   listCaptureSources: () => Promise<CaptureSource[]>;
   prepareCaptureSource: (sourceId: string) => Promise<{ ok: true }>;
   createRecording: (payload: { sourceId: string; sourceName: string }) => Promise<{ jobId: string; filePath: string }>;

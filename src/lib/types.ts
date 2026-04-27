@@ -1,7 +1,14 @@
 export type AppInfo = {
   platform: string;
+  platformLabel: string;
   workspaceRoot: string;
   jobsRoot: string;
+  isPackaged: boolean;
+  captureAudioMode: string;
+  permissions: {
+    screen: string;
+    microphone: string;
+  };
   codexAvailable: boolean;
   larkCliAvailable: boolean;
 };

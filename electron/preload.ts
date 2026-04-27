@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 
 const api = {
   getAppInfo: () => ipcRenderer.invoke("app:get-info"),
+  openSystemSettings: (section: "screen" | "microphone") =>
+    ipcRenderer.invoke("app:open-system-settings", section),
   listCaptureSources: () => ipcRenderer.invoke("capture:list-sources"),
   prepareCaptureSource: (sourceId: string) => ipcRenderer.invoke("capture:prepare-source", sourceId),
   createRecording: (payload: { sourceId: string; sourceName: string }) =>

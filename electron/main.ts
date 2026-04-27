@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, Menu, desktopCapturer, ipcMain, session, shell, systemPreferences } from "electron";
 import { randomUUID } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -31,6 +31,14 @@ const activeRecordings = new Map<string, RecordingHandle>();
 const activeProcesses = new Map<string, ReturnType<typeof spawn>>();
 let mainWindow: BrowserWindow | null = null;
 let pendingSourceId: string | null = null;
+const isMac = process.platform === "darwin";
+
+function getPlatformLabel() {
+  if (process.platform === "darwin") return "macOS";
+  if (process.platform === "win32") return "Windows";
+  if (process.platform === "linux") return "Linux";
+  return process.platform;
+}
 
 function getWorkspaceRoot() {
   return app.isPackaged ? join(app.getPath("documents"), "FeishuMeetingAssistant") : process.cwd();
@@ -75,6 +83,30 @@ function commandAvailable(command: string) {
 function getPythonCommand() {
   if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
   return process.platform === "win32" ? "python" : "python3";
+}
+
+function getMediaAccessStatus(mediaType: "screen" | "microphone") {
+  if (!isMac) return "not-required";
+
+  try {
+    return systemPreferences.getMediaAccessStatus(
+      mediaType as Parameters<typeof systemPreferences.getMediaAccessStatus>[0]
+    );
+  } catch {
+    return "unknown";
+  }
+}
+
+function getCaptureAudioMode() {
+  if (process.platform === "win32") {
+    return "system-loopback";
+  }
+
+  if (isMac) {
+    return "microphone-or-loopback-input";
+  }
+
+  return "input-device";
 }
 
 function ensureJobSubdirs(jobId: string) {
@@ -128,12 +160,14 @@ async function listSources(): Promise<SourceSummary[]> {
 function createMainWindow() {
   const devServerUrl = process.env.MEETING_ASSISTANT_DEV_SERVER_URL;
   mainWindow = new BrowserWindow({
-    width: 1540,
-    height: 980,
-    minWidth: 1240,
-    minHeight: 820,
-    backgroundColor: "#09090b",
-    autoHideMenuBar: true,
+    width: 1480,
+    height: 940,
+    minWidth: 1100,
+    minHeight: 760,
+    backgroundColor: "#0a0a0a",
+    autoHideMenuBar: !isMac,
+    titleBarStyle: isMac ? "hiddenInset" : "default",
+    trafficLightPosition: isMac ? { x: 18, y: 18 } : undefined,
     title: "Feishu Meeting Assistant",
     webPreferences: {
       preload: join(__dirname, "preload.js"),
@@ -148,6 +182,75 @@ function createMainWindow() {
   } else {
     mainWindow.loadFile(join(app.getAppPath(), "dist", "index.html"));
   }
+}
+
+function createApplicationMenu() {
+  if (!isMac) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        {
+          label: "Open Screen Recording Settings",
+          click: () => {
+            shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+          }
+        },
+        {
+          label: "Open Microphone Settings",
+          click: () => {
+            shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+          }
+        },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" }
+      ]
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" }
+      ]
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
+      ]
+    },
+    {
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "front" }]
+    }
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function setupDisplayMediaHandler() {
@@ -186,11 +289,29 @@ function setupDisplayMediaHandler() {
 function registerIpcHandlers() {
   ipcMain.handle("app:get-info", () => ({
     platform: process.platform,
+    platformLabel: getPlatformLabel(),
     workspaceRoot: getWorkspaceRoot(),
     jobsRoot: getJobsRoot(),
+    isPackaged: app.isPackaged,
+    captureAudioMode: getCaptureAudioMode(),
+    permissions: {
+      screen: getMediaAccessStatus("screen"),
+      microphone: getMediaAccessStatus("microphone")
+    },
     codexAvailable: commandAvailable(process.platform === "win32" ? "codex.cmd" : "codex") || commandAvailable("codex"),
     larkCliAvailable: commandAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli") || commandAvailable("lark-cli")
   }));
+
+  ipcMain.handle("app:open-system-settings", async (_event, section: "screen" | "microphone") => {
+    if (!isMac) return { ok: true };
+
+    const url =
+      section === "screen"
+        ? "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        : "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+    await shell.openExternal(url);
+    return { ok: true };
+  });
 
   ipcMain.handle("capture:list-sources", async () => listSources());
 
@@ -359,7 +480,9 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(() => {
+  app.setName("Feishu Meeting Assistant");
   loadDotEnv();
+  createApplicationMenu();
   setupDisplayMediaHandler();
   registerIpcHandlers();
   createMainWindow();
