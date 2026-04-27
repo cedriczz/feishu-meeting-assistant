@@ -182,15 +182,18 @@ def build_codex_prompt(job_dir: Path, transcript_path: Path) -> str:
         ```
 
         Required local outputs:
-        1. Write the final Chinese meeting note to `output/meeting-notes.md`.
-        2. Extract actionable TODO items into `output/tasks-review.json`.
-        3. Create a Lark cloud document from `output/meeting-notes.md` with `lark-cli`.
-        4. Create one visible Lark To Do for each actionable TODO.
-        5. Write cloud document and To Do results to `output/dispatch-result.json`.
+        1. Read the full transcript and write a cleaned transcript digest to `output/cleaned-transcript.md`.
+        2. Write the final Chinese meeting note to `output/meeting-notes.md`.
+        3. Extract actionable TODO items into `output/tasks-review.json`.
+        4. Create a Lark cloud document from `output/meeting-notes.md` with `lark-cli`.
+        5. Create one visible Lark To Do for each actionable TODO.
+        6. Write cloud document and To Do results to `output/dispatch-result.json`.
 
         Rules:
         - This is not a dry run. The user has authorized creating the Lark document and To Dos.
         - Do not modify files under `input/`.
+        - Do not summarize too aggressively. Preserve all projects, regions, risks, numbers, owners, deadlines, and unresolved questions.
+        - Use the meeting note formatting skill exactly for document structure and quality standards.
         - Do not infer real project owners from the meeting.
         - For visibility, assign created To Dos only to the currently logged-in Lark user.
         - Get the current user open_id from `lark-cli auth status`.
@@ -298,10 +301,16 @@ def run_codex(job_dir: Path, prompt: str) -> None:
 
 
 def ensure_minimum_outputs(job_dir: Path) -> None:
+    cleaned_path = job_dir / "output" / "cleaned-transcript.md"
     notes_path = job_dir / "output" / "meeting-notes.md"
     tasks_path = job_dir / "output" / "tasks-review.json"
     dispatch_path = job_dir / "output" / "dispatch-result.json"
 
+    if not cleaned_path.exists():
+        cleaned_path.write_text(
+            "# Cleaned Transcript Digest\n\nCodex did not write cleaned-transcript.md. Check `output/raw-speaker-transcript.md` first.\n",
+            encoding="utf-8",
+        )
     if not notes_path.exists():
         notes_path.write_text(
             "# Meeting Notes\n\nCodex did not write meeting-notes.md. Check `output/raw-speaker-transcript.md` first.\n",
@@ -427,7 +436,8 @@ def ensure_document_body(cloud_document: dict, notes: str) -> None:
 
     try:
         markdown = fetched_document_markdown(str(doc))
-        if len(markdown) >= 200 and "关键结论" in markdown and "TODO" in markdown:
+        required_sections = ["重点项目", "项目跟进表", "详细纪要", "待办事项"]
+        if len(markdown) >= 500 and all(section in markdown for section in required_sections):
             return
     except Exception:
         # Fall through and try to repair using overwrite.
