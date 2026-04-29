@@ -30,6 +30,8 @@ https://github.com/cedriczz/feishu-meeting-assistant
 
 如果你是正在接手这个仓库的 AI Agent，按下面顺序做：
 
+项目级操作约定见 `AGENTS.md`。先读本 README，再读 `AGENTS.md`，然后执行环境检查。
+
 ```bash
 git clone https://github.com/cedriczz/feishu-meeting-assistant.git
 cd feishu-meeting-assistant
